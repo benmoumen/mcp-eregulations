@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  mcp-eregulations:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - EREGULATIONS_API_URL=https://api-tanzania.tradeportal.org
+      - EREGULATIONS_API_VERSION=v1
+      - MCP_SERVER_NAME=eregulations
+      - MCP_SERVER_PORT=8000
+      - CACHE_ENABLED=true
+      - CACHE_TTL=3600
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Optional monitoring service
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - mcp-eregulations
+    restart: unless-stopped
+
+  # Optional visualization service
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./monitoring/grafana:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
