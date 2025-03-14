@@ -17,14 +17,24 @@ class QueryHandler:
         """Initialize the query handler."""
         # Define patterns for recognizing different types of queries
         self.patterns = {
-            "procedure_id": r"procedure(?:\s+with)?\s+id\s+(\d+)",
-            "procedure_steps": r"steps\s+(?:for|of)\s+procedure\s+(?:with\s+id\s+)?(\d+)",
             "procedure_requirements": r"requirements\s+(?:for|of)\s+procedure\s+(?:with\s+id\s+)?(\d+)",
+            "procedure_steps": r"steps\s+(?:for|of)\s+procedure\s+(?:with\s+id\s+)?(\d+)",
             "procedure_costs": r"costs?\s+(?:for|of)\s+procedure\s+(?:with\s+id\s+)?(\d+)",
+            "procedure_id": r"procedure(?:\s+with)?\s+id\s+(\d+)",
             "search_keyword": r"search\s+(?:for\s+)?(?:procedures?\s+)?(?:with\s+)?(?:keyword\s+)?['\"]?([^'\"]+)['\"]?",
             "institution_info": r"institution\s+(?:with\s+id\s+)?(\d+)",
         }
-    
+        
+        # Map pattern types to response types and tools
+        self.type_mappings = {
+            "procedure_id": ("procedure_info", "get_procedure"),
+            "procedure_steps": ("procedure_steps", "get_procedure_steps"),
+            "procedure_requirements": ("procedure_requirements", "get_procedure_requirements"),
+            "procedure_costs": ("procedure_costs", "get_procedure_costs"),
+            "search_keyword": ("search", "search_procedures_by_keyword"),
+            "institution_info": ("institution_info", "get_institution_info"),
+        }
+
     async def process_query(self, query: str) -> Dict[str, Any]:
         """
         Process a user query and determine the appropriate action.
@@ -37,84 +47,46 @@ class QueryHandler:
         """
         query = query.lower().strip()
         
-        # Check for procedure ID pattern
-        match = re.search(self.patterns["procedure_id"], query)
-        if match:
-            procedure_id = int(match.group(1))
-            return {
-                "type": "procedure_info",
-                "parameters": {"procedure_id": procedure_id},
-                "suggested_tool": "get_procedure",
-                "confidence": 0.9
-            }
+        # Check for specific patterns in order of specificity
+        for pattern_type, pattern in self.patterns.items():
+            match = re.search(pattern, query)
+            if match:
+                value = match.group(1)
+                response_type, tool = self.type_mappings[pattern_type]
+                
+                # Convert value to int for procedure and institution IDs
+                if "procedure" in pattern_type or pattern_type == "institution_info":
+                    value = int(value)
+                
+                # Determine parameter name based on type
+                param_name = "procedure_id" if "procedure" in pattern_type else "institution_id" if pattern_type == "institution_info" else "query"
+                
+                return {
+                    "type": response_type,
+                    "parameters": {
+                        param_name: value,
+                        **({"limit": 5} if pattern_type == "search_keyword" else {})
+                    },
+                    "suggested_tool": tool,
+                    "confidence": 0.9 if pattern_type != "search_keyword" else 0.8
+                }
         
-        # Check for procedure steps pattern
-        match = re.search(self.patterns["procedure_steps"], query)
-        if match:
-            procedure_id = int(match.group(1))
-            return {
-                "type": "procedure_steps",
-                "parameters": {"procedure_id": procedure_id},
-                "suggested_tool": "get_procedure_steps",
-                "confidence": 0.9
-            }
+        # Check for general search terms and business-related keywords
+        search_terms = ["how to", "where to", "find a", "search for", "looking for", "information about", "related to"]
+        business_terms = ["register", "business", "company", "permit", "license", "trade", "import", "export"]
         
-        # Check for procedure requirements pattern
-        match = re.search(self.patterns["procedure_requirements"], query)
-        if match:
-            procedure_id = int(match.group(1))
-            return {
-                "type": "procedure_requirements",
-                "parameters": {"procedure_id": procedure_id},
-                "suggested_tool": "get_procedure_requirements",
-                "confidence": 0.9
-            }
+        if (any(term in query for term in search_terms) or 
+            any(term in query for term in business_terms)):
+            keywords = self._extract_keywords(query)
+            if keywords:
+                return {
+                    "type": "search",
+                    "parameters": {"query": " ".join(keywords), "limit": 5},
+                    "suggested_tool": "search_procedures_by_keyword",
+                    "confidence": 0.6
+                }
         
-        # Check for procedure costs pattern
-        match = re.search(self.patterns["procedure_costs"], query)
-        if match:
-            procedure_id = int(match.group(1))
-            return {
-                "type": "procedure_costs",
-                "parameters": {"procedure_id": procedure_id},
-                "suggested_tool": "get_procedure_costs",
-                "confidence": 0.9
-            }
-        
-        # Check for search keyword pattern
-        match = re.search(self.patterns["search_keyword"], query)
-        if match:
-            keyword = match.group(1).strip()
-            return {
-                "type": "search",
-                "parameters": {"query": keyword, "limit": 5},
-                "suggested_tool": "search_procedures_by_keyword",
-                "confidence": 0.8
-            }
-        
-        # Check for institution info pattern
-        match = re.search(self.patterns["institution_info"], query)
-        if match:
-            institution_id = int(match.group(1))
-            return {
-                "type": "institution_info",
-                "parameters": {"institution_id": institution_id},
-                "suggested_tool": "get_institution_info",
-                "confidence": 0.9
-            }
-        
-        # If no specific pattern matches, treat as a general search
-        # Extract potential keywords
-        keywords = self._extract_keywords(query)
-        if keywords:
-            return {
-                "type": "search",
-                "parameters": {"query": " ".join(keywords), "limit": 5},
-                "suggested_tool": "search_procedures_by_keyword",
-                "confidence": 0.6
-            }
-        
-        # If all else fails, return a fallback response
+        # If no patterns match, return unknown
         return {
             "type": "unknown",
             "parameters": {},
@@ -122,7 +94,7 @@ class QueryHandler:
             "confidence": 0.0,
             "message": "I couldn't understand your query. Please try asking about a specific procedure, steps, requirements, costs, or search for procedures using keywords."
         }
-    
+
     def _extract_keywords(self, query: str) -> List[str]:
         """
         Extract potential keywords from a query.
@@ -133,14 +105,16 @@ class QueryHandler:
         Returns:
             List of potential keywords
         """
-        # Remove common stop words
+        # Remove common stop words and question words
         stop_words = {
             "a", "about", "an", "and", "are", "as", "at", "be", "by", "for",
             "from", "how", "i", "in", "is", "it", "of", "on", "or", "that",
             "the", "this", "to", "was", "what", "when", "where", "who", "will",
-            "with", "the", "procedure", "procedures", "step", "steps", "requirement",
+            "with", "procedure", "procedures", "step", "steps", "requirement",
             "requirements", "cost", "costs", "information", "info", "detail",
-            "details", "tell", "me", "show", "get", "find", "search", "looking"
+            "details", "tell", "me", "show", "get", "find", "search", "looking",
+            "which", "why", "can", "could", "would", "should", "do", "does",
+            "meaning", "life", "want", "need", "help", "please"
         }
         
         # Tokenize and filter

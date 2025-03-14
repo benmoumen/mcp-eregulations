@@ -8,9 +8,11 @@ ENV PYTHONPATH=/app
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system dependencies - with fix for GPG issues
+RUN apt-get update -y --allow-insecure-repositories && \
+    apt-get install -y --no-install-recommends --allow-unauthenticated \
     build-essential \
+    curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
