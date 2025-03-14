@@ -1,42 +1,44 @@
 FROM python:3.10-slim
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app
+# Install system dependencies and uv
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && ln -s /root/.local/bin/uv /usr/local/bin/
 
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies - with fix for GPG issues
-RUN apt-get update -y --allow-insecure-repositories && \
-    apt-get install -y --no-install-recommends --allow-unauthenticated \
-    build-essential \
-    curl \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
+# Install dependencies using uv
+RUN uv pip install --system --no-cache -r requirements.txt
 
 # Copy application code
-COPY src/ /app/
+COPY . .
 
-# Create directories for data
-RUN mkdir -p /app/data/auth /app/data/index
+# Add src directory to PYTHONPATH
+ENV PYTHONPATH=/app/src:$PYTHONPATH
 
-# Set default environment variables
-ENV EREGULATIONS_API_URL="https://api-tanzania.tradeportal.org"
-ENV EREGULATIONS_API_VERSION="v1"
-ENV MCP_SERVER_NAME="eregulations"
-ENV MCP_SERVER_PORT=8000
-ENV CACHE_ENABLED=true
-ENV CACHE_TTL=3600
-ENV LOG_LEVEL="INFO"
+# Create data directory with proper permissions
+RUN mkdir -p /app/data && chmod 777 /app/data
 
-# Expose the port
-EXPOSE 8000
+# Default environment variables
+ENV MCP_SERVER_NAME=eregulations \
+    MCP_SERVER_PORT=8000 \
+    MCP_HOST=0.0.0.0 \
+    MCP_TRANSPORT=auto \
+    MCP_LOG_LEVEL=INFO \
+    EREGULATIONS_API_URL=https://api.eregulations.org \
+    EREGULATIONS_API_VERSION=v1 \
+    CACHE_ENABLED=true \
+    CACHE_TTL=3600
 
-# Run the application
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD curl -f http://localhost:${MCP_SERVER_PORT}/health || exit 1
+
+# Run the server
 CMD ["python", "-m", "mcp_eregulations.main"]

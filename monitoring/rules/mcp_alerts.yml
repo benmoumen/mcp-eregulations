@@ -1,0 +1,177 @@
+groups:
+  - name: mcp_alerts
+    rules:
+      # Client Connection Alerts
+      - alert: MCPHighClientDisconnectRate
+        expr: |
+          rate(mcp_active_clients{transport="sse"}[5m]) < -0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High rate of MCP client disconnections
+          description: "SSE clients are disconnecting at a high rate over the last 5 minutes"
+
+      - alert: MCPNoActiveClients
+        expr: |
+          sum(mcp_active_clients) == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: No active MCP clients
+          description: "No active MCP clients for 5 minutes"
+
+      # Resource Request Alerts
+      - alert: MCPResourceHighErrorRate
+        expr: |
+          sum(rate(mcp_resource_requests_total{status="error"}[5m])) 
+          / 
+          sum(rate(mcp_resource_requests_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High resource request error rate
+          description: "Over 10% of resource requests are failing"
+
+      - alert: MCPResourceSlowResponses
+        expr: |
+          histogram_quantile(0.95, sum(rate(mcp_request_duration_seconds_bucket{type="resource"}[5m])) by (le, name))
+          > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Slow resource responses
+          description: "95th percentile of resource responses taking more than 2 seconds"
+
+      # Tool Execution Alerts
+      - alert: MCPToolHighFailureRate
+        expr: |
+          sum(rate(mcp_tool_executions_total{status="error"}[5m])) 
+          / 
+          sum(rate(mcp_tool_executions_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High tool execution failure rate
+          description: "Over 10% of tool executions are failing"
+
+      - alert: MCPToolSlowExecution
+        expr: |
+          histogram_quantile(0.95, sum(rate(mcp_request_duration_seconds_bucket{type="tool"}[5m])) by (le, name))
+          > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Slow tool execution
+          description: "95th percentile of tool executions taking more than 5 seconds"
+
+      # Subscription Alerts
+      - alert: MCPHighSubscriptionLoad
+        expr: |
+          sum(mcp_active_subscriptions) > scalar(max_over_time(mcp_active_subscriptions[7d]) * 1.5)
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High subscription load
+          description: "Number of active subscriptions 50% above 7-day maximum"
+
+      - alert: MCPSubscriptionOverload
+        expr: sum(mcp_active_subscriptions) > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High number of active subscriptions
+          description: "{{ $value }} active subscriptions"
+
+      # Completion Alerts
+      - alert: MCPSlowCompletions
+        expr: |
+          histogram_quantile(0.95, sum(rate(mcp_completion_latency_seconds_bucket[5m])) by (le, argument_type))
+          > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Slow completion generation
+          description: "95th percentile of completions taking more than 1 second"
+
+      # Error Alerts
+      - alert: MCPHighErrorRate
+        expr: rate(mcp_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High error rate on MCP server
+          description: "Error rate is {{ $value }} errors/second over 5 minutes"
+
+      - alert: MCPCriticalErrors
+        expr: |
+          increase(mcp_errors_total{code=~"5.*"}[5m]) > 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Critical error spike
+          description: "More than 10 5xx errors in 5 minutes"
+
+      - alert: MCPHighResponseTime
+        expr: histogram_quantile(0.95, sum(rate(mcp_request_duration_seconds_bucket[5m])) by (le)) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Slow MCP response times
+          description: "95th percentile response time is {{ $value }}s over 5 minutes"
+
+      - alert: MCPHighMemoryUsage
+        expr: process_resident_memory_bytes{job="mcp"} > 1e9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High memory usage on MCP server
+          description: "Memory usage is {{ $value | humanize }}B"
+
+      - alert: MCPClientOverload
+        expr: sum(mcp_active_clients) > 500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High number of connected clients
+          description: "{{ $value }} active clients"
+
+      - alert: MCPServerUnavailable
+        expr: up{job="mcp"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: MCP server is down
+          description: "MCP server instance {{ $labels.instance }} is down"
+
+      - alert: MCPHighCPUUsage
+        expr: rate(process_cpu_seconds_total{job="mcp"}[5m]) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High CPU usage on MCP server
+          description: "CPU usage is {{ $value | humanize }}% over 5 minutes"
+
+      - alert: MCPBacklogBuilding
+        expr: sum(mcp_request_queue_size) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Request backlog building up
+          description: "{{ $value }} requests in queue"

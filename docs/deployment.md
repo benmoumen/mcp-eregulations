@@ -321,3 +321,128 @@ Example response:
 ```
 
 For more detailed troubleshooting, refer to the user documentation or contact support.
+
+# Deployment Guide
+
+This guide covers deploying the MCP eRegulations server in various environments.
+
+## Environment Configuration
+
+### Required Environment Variables
+
+The following environment variables must be configured:
+
+```bash
+# Server Configuration
+MCP_SERVER_NAME=eregulations  # Name of the MCP server instance
+MCP_SERVER_PORT=8000          # Port to run the server on
+MCP_HOST=0.0.0.0             # Host interface to bind to
+MCP_TRANSPORT=auto           # Transport mode (auto, stdio, or sse)
+
+# eRegulations API Configuration
+EREGULATIONS_API_URL         # Base URL of the eRegulations API instance
+EREGULATIONS_API_VERSION     # API version to use (default: v1)
+EREGULATIONS_API_KEY         # Optional API key for authentication
+
+# Optional Configuration
+CACHE_ENABLED=true           # Enable response caching
+CACHE_TTL=3600              # Cache TTL in seconds
+```
+
+### Docker Deployment
+
+When using Docker, you can configure the API URL in several ways:
+
+1. Environment file:
+```bash
+# .env file
+EREGULATIONS_API_URL=https://api-example.eregulations.org
+```
+
+2. Docker run command:
+```bash
+docker run -e EREGULATIONS_API_URL=https://api-example.eregulations.org -p 8000:8000 mcp-eregulations
+```
+
+3. Docker Compose:
+```yaml
+version: '3'
+services:
+  mcp-server:
+    build: .
+    environment:
+      - EREGULATIONS_API_URL=https://api-example.eregulations.org
+    ports:
+      - "8000:8000"
+```
+
+### Kubernetes Deployment
+
+For Kubernetes deployments, configure the API URL using:
+
+1. ConfigMap:
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-eregulations-config
+data:
+  EREGULATIONS_API_URL: "https://api-example.eregulations.org"
+```
+
+2. Environment variables in deployment:
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-eregulations
+spec:
+  template:
+    spec:
+      containers:
+      - name: mcp-eregulations
+        env:
+        - name: EREGULATIONS_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-eregulations-config
+              key: EREGULATIONS_API_URL
+```
+
+## Health Checks
+
+The server provides a health check endpoint that returns the current API URL configuration:
+
+```bash
+curl http://localhost:8000/health
+```
+
+## Monitoring
+
+Monitor the API connection status using the provided Prometheus metrics:
+- `mcp_api_requests_total`: Total number of API requests
+- `mcp_api_request_duration_seconds`: API request duration
+- `mcp_api_errors_total`: Total number of API errors
+
+## Troubleshooting
+
+### Common Deployment Issues
+
+1. API Connection Issues
+   - Verify the API URL is accessible from the deployment environment
+   - Check network policies and firewall rules
+   - Validate SSL certificates if using HTTPS
+
+2. Configuration Issues
+   - Ensure environment variables are properly set
+   - Check for typos in the API URL
+   - Verify the API version is supported
+
+### Logs
+
+Enable debug logging by setting:
+```bash
+MCP_LOG_LEVEL=DEBUG
+```
+
+This will show detailed API connection information in the logs.

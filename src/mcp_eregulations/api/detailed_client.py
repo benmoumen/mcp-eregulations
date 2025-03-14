@@ -1,149 +1,170 @@
 """
-Module for handling API integration with the eRegulations platform.
-This module extends the basic client with more detailed API interactions.
+Detailed API client with enhanced functionality for eRegulations data.
 """
-from typing import Any, Dict, List, Optional
 import logging
-from mcp_eregulations.api.client import ERegulationsClient, client
+from typing import Any, Dict, List, Optional
+
+from mcp_eregulations.api.client import ERegulationsClient
+from mcp_eregulations.utils import subscriptions
+from mcp_eregulations.utils.errors import APIError
 
 logger = logging.getLogger(__name__)
 
+
 class DetailedERegulationsClient(ERegulationsClient):
-    """Extended client for more detailed interactions with the eRegulations API."""
-    
+    """Enhanced client with additional API functionality."""
+
     async def get_procedure_detailed(self, procedure_id: int) -> Dict[str, Any]:
         """
-        Get comprehensive procedure information by combining multiple API calls.
+        Get comprehensive information about a procedure by combining multiple API calls.
         
         Args:
             procedure_id: The ID of the procedure
             
         Returns:
-            A dictionary with comprehensive procedure information
+            Combined procedure information
         """
-        # Get basic procedure information
-        procedure = await self.get_procedure(procedure_id)
-        if not procedure:
-            return {"error": f"Procedure with ID {procedure_id} not found"}
-        
-        # Get procedure resume
-        resume = await self.get_procedure_resume(procedure_id)
-        
-        # Get procedure costs
-        costs = await self.get_procedure_costs(procedure_id)
-        
-        # Get procedure requirements
-        requirements = await self.get_procedure_requirements(procedure_id)
-        
-        # Combine all information
-        result = {
-            "basic_info": procedure,
-            "resume": resume,
-            "costs": costs,
-            "requirements": requirements
-        }
-        
-        return result
+        try:
+            # Get basic procedure data
+            basic_info = await self.get_procedure(procedure_id)
+            if not basic_info:
+                return {"error": f"Procedure {procedure_id} not found"}
+            
+            # Get additional information
+            resume = await self.get_procedure_resume(procedure_id)
+            costs = await self.get_procedure_costs(procedure_id)
+            requirements = await self.get_procedure_requirements(procedure_id)
+            
+            # Combine all data
+            result = {
+                "basic_info": basic_info,
+                "resume": resume,
+                "costs": costs,
+                "requirements": requirements
+            }
+            
+            # Notify subscribers about the combined data
+            await subscriptions.subscription_manager.notify_update(
+                f"eregulations://procedure/{procedure_id}/detailed",
+                result,
+                mime_type="application/json"
+            )
+            
+            return result
+            
+        except APIError as e:
+            return {"error": str(e)}
     
     async def get_procedure_abc(self, procedure_id: int) -> Optional[Dict[str, Any]]:
         """
-        Get the Activity-Based Costing (ABC) information for a procedure.
+        Get Activity-Based Costing analysis for a procedure.
         
         Args:
             procedure_id: The ID of the procedure
             
         Returns:
-            ABC data for the procedure, or None if not found
+            ABC analysis data or None if not found
         """
         endpoint = f"Procedures/{procedure_id}/ABC"
-        return await self.make_request(endpoint)
-    
-    async def get_procedure_abc_full(self, procedure_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Get the detailed ABC information for a procedure.
-        
-        Args:
-            procedure_id: The ID of the procedure
+        try:
+            data = await self.make_request(endpoint)
             
-        Returns:
-            Detailed ABC data for the procedure, or None if not found
-        """
-        endpoint = f"Procedures/{procedure_id}/ABC/Full"
-        return await self.make_request(endpoint)
+            # Notify subscribers if data was fetched
+            if data:
+                await subscriptions.subscription_manager.notify_update(
+                    f"eregulations://procedure/{procedure_id}/abc",
+                    data,
+                    mime_type="application/json"
+                )
+            
+            return data
+        except APIError as e:
+            if e.status_code == 404:
+                return None
+            raise
     
-    async def get_step_details(self, procedure_id: int, step_id: int) -> Optional[Dict[str, Any]]:
+    async def get_step_details(
+        self, procedure_id: int, step_id: int
+    ) -> Optional[Dict[str, Any]]:
         """
-        Get detailed information about a specific step in a procedure.
+        Get detailed information about a specific step.
         
         Args:
             procedure_id: The ID of the procedure
             step_id: The ID of the step
             
         Returns:
-            Step details, or None if not found
+            Step details or None if not found
         """
         endpoint = f"Procedures/{procedure_id}/Steps/{step_id}"
-        return await self.make_request(endpoint)
-    
-    async def get_step_abc(self, procedure_id: int, step_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Get the ABC information for a specific step in a procedure.
-        
-        Args:
-            procedure_id: The ID of the procedure
-            step_id: The ID of the step
+        try:
+            data = await self.make_request(endpoint)
             
-        Returns:
-            Step ABC data, or None if not found
-        """
-        endpoint = f"Procedures/{procedure_id}/Steps/{step_id}/ABC"
-        return await self.make_request(endpoint)
-    
-    async def get_countries(self) -> Optional[List[Dict[str, Any]]]:
-        """
-        Get the list of countries available in the eRegulations system.
-        
-        Returns:
-            List of countries, or None if the request failed
-        """
-        endpoint = "Country"
-        return await self.make_request(endpoint)
-    
-    async def get_country_parameters(self, country_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Get parameters for a specific country.
-        
-        Args:
-            country_id: The ID of the country
+            # Notify subscribers if data was fetched
+            if data:
+                await subscriptions.subscription_manager.notify_update(
+                    f"eregulations://procedure/{procedure_id}/step/{step_id}",
+                    data,
+                    mime_type="application/json"
+                )
             
-        Returns:
-            Country parameters, or None if not found
-        """
-        endpoint = f"CountryParameters/{country_id}"
-        return await self.make_request(endpoint)
-    
-    async def get_institutions(self) -> Optional[List[Dict[str, Any]]]:
-        """
-        Get the list of institutions (units) in the eRegulations system.
-        
-        Returns:
-            List of institutions, or None if the request failed
-        """
-        endpoint = "Unit"
-        return await self.make_request(endpoint)
+            return data
+        except APIError as e:
+            if e.status_code == 404:
+                return None
+            raise
     
     async def get_institution_details(self, institution_id: int) -> Optional[Dict[str, Any]]:
         """
-        Get details for a specific institution.
+        Get information about an institution.
         
         Args:
             institution_id: The ID of the institution
             
         Returns:
-            Institution details, or None if not found
+            Institution details or None if not found
         """
-        endpoint = f"Unit/{institution_id}"
-        return await self.make_request(endpoint)
+        endpoint = f"Institutions/{institution_id}"
+        try:
+            data = await self.make_request(endpoint)
+            
+            # Notify subscribers if data was fetched
+            if data:
+                await subscriptions.subscription_manager.notify_update(
+                    f"eregulations://institution/{institution_id}",
+                    data,
+                    mime_type="application/json"
+                )
+            
+            return data
+        except APIError as e:
+            if e.status_code == 404:
+                return None
+            raise
+    
+    async def get_countries(self) -> List[Dict[str, Any]]:
+        """
+        Get list of countries in the eRegulations system.
+        
+        Returns:
+            List of country information
+        """
+        endpoint = "Countries"
+        try:
+            data = await self.make_request(endpoint)
+            
+            # Notify subscribers about country list updates
+            if data:
+                await subscriptions.subscription_manager.notify_update(
+                    "eregulations://countries",
+                    data,
+                    mime_type="application/json"
+                )
+            
+            return data or []
+        except APIError:
+            return []
+
 
 # Create a global detailed client instance
 detailed_client = DetailedERegulationsClient()

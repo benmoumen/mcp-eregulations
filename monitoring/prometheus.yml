@@ -1,0 +1,76 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+scrape_configs:
+  - job_name: 'mcp_eregulations'
+    static_configs:
+      - targets: ['localhost:9090']
+    metrics_path: '/metrics'
+    scheme: 'http'
+    honor_labels: true
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: '^mcp_.*'
+        action: 'keep'
+
+  - job_name: 'mcp_resources'
+    static_configs:
+      - targets: ['localhost:9090']
+    metrics_path: '/metrics/resources'
+    scheme: 'http'
+    honor_labels: true
+    metric_relabel_configs:
+      - source_labels: [resource_type]
+        regex: '^eregulations://.*'
+        action: 'keep'
+
+  - job_name: 'mcp_tools'
+    static_configs:
+      - targets: ['localhost:9090']
+    metrics_path: '/metrics/tools'
+    scheme: 'http'
+    honor_labels: true
+    metric_relabel_configs:
+      - source_labels: [tool_name]
+        action: 'keep'
+
+  - job_name: 'mcp_prompts'
+    static_configs:
+      - targets: ['localhost:9090']
+    metrics_path: '/metrics/prompts'
+    scheme: 'http'
+    honor_labels: true
+    metric_relabel_configs:
+      - source_labels: [prompt_name]
+        action: 'keep'
+
+  - job_name: 'mcp_subscriptions'
+    static_configs:
+      - targets: ['localhost:9090']
+    metrics_path: '/metrics/subscriptions'
+    scheme: 'http'
+    honor_labels: true
+    metric_relabel_configs:
+      - source_labels: [pattern]
+        action: 'keep'
+
+  - job_name: 'mcp_errors'
+    static_configs:
+      - targets: ['localhost:9090']
+    metrics_path: '/metrics/errors'
+    scheme: 'http'
+    honor_labels: true
+    metric_relabel_configs:
+      - source_labels: [type]
+        action: 'keep'
+
+rule_files:
+  - 'rules/*.yml'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - 'alertmanager:9093'

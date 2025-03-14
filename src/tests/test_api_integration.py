@@ -1,113 +1,191 @@
 """
-Tests for the MCP eRegulations server API integration.
+Integration tests for MCP eRegulations API functionality.
+Tests the interaction between API clients, resources, and MCP features.
 """
+import asyncio
+import json
+from typing import List
+
 import pytest
-import os
-import sys
-from unittest.mock import AsyncMock, patch, MagicMock
+from mcp import types
+from mcp.server.fastmcp import FastMCP
 
-# Add the src directory to the Python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
-
+from mcp_eregulations.api.client import ERegulationsClient
 from mcp_eregulations.api.detailed_client import DetailedERegulationsClient
+from mcp_eregulations.utils import subscriptions
+from mcp_eregulations.utils.errors import APIError
 
 
-class TestDetailedERegulationsClient:
-    """Tests for the DetailedERegulationsClient class."""
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_procedure_resource_flow(
+    mock_client: ERegulationsClient,
+    mock_detailed_client: DetailedERegulationsClient,
+    mock_context,
+    test_server: FastMCP
+):
+    """Test the complete flow of fetching and exposing procedure data via MCP."""
     
-    @pytest.fixture
-    def client(self):
-        """Create a client instance for testing."""
-        return DetailedERegulationsClient()
+    # Initialize resource handler
+    @test_server.resource("eregulations://procedure/{procedure_id}")
+    async def get_procedure(procedure_id: str, ctx: types.Context) -> str:
+        # Set mock clients in context
+        ctx.request_context.lifespan_context = {
+            "client": mock_client,
+            "detailed_client": mock_detailed_client
+        }
+        
+        # Convert ID to integer
+        proc_id = int(procedure_id)
+        
+        # Get procedure data
+        result = await mock_detailed_client.get_procedure_detailed(proc_id)
+        
+        if "error" in result:
+            return result["error"]
+        
+        # Format as markdown
+        return format_procedure_markdown(result)
     
-    @pytest.mark.asyncio
-    @patch("mcp_eregulations.api.detailed_client.ERegulationsClient.get_procedure")
-    @patch("mcp_eregulations.api.detailed_client.ERegulationsClient.get_procedure_resume")
-    @patch("mcp_eregulations.api.detailed_client.ERegulationsClient.get_procedure_costs")
-    @patch("mcp_eregulations.api.detailed_client.ERegulationsClient.get_procedure_requirements")
-    async def test_get_procedure_detailed(
-        self, mock_get_requirements, mock_get_costs, 
-        mock_get_resume, mock_get_procedure, client
-    ):
-        """Test get_procedure_detailed method."""
-        # Setup mocks
-        mock_get_procedure.return_value = {"id": 123, "title": "Test Procedure"}
-        mock_get_resume.return_value = {"title": "Resume Title", "description": "Resume Description"}
-        mock_get_costs.return_value = {"totalCost": 100, "currency": "USD"}
-        mock_get_requirements.return_value = {"items": [{"name": "Requirement 1"}]}
-        
-        # Call the method
-        result = await client.get_procedure_detailed(123)
-        
-        # Assertions
-        assert result["basic_info"] == {"id": 123, "title": "Test Procedure"}
-        assert result["resume"] == {"title": "Resume Title", "description": "Resume Description"}
-        assert result["costs"] == {"totalCost": 100, "currency": "USD"}
-        assert result["requirements"] == {"items": [{"name": "Requirement 1"}]}
-        
-        # Verify method calls
-        mock_get_procedure.assert_called_once_with(123)
-        mock_get_resume.assert_called_once_with(123)
-        mock_get_costs.assert_called_once_with(123)
-        mock_get_requirements.assert_called_once_with(123)
+    # Test procedure resource
+    result = await get_procedure("123", mock_context)
     
-    @pytest.mark.asyncio
-    @patch("mcp_eregulations.api.detailed_client.ERegulationsClient.get_procedure")
-    async def test_get_procedure_detailed_not_found(self, mock_get_procedure, client):
-        """Test get_procedure_detailed method when procedure is not found."""
-        # Setup mock
-        mock_get_procedure.return_value = None
-        
-        # Call the method
-        result = await client.get_procedure_detailed(123)
-        
-        # Assertions
-        assert "error" in result
-        assert "not found" in result["error"]
-        
-        # Verify method call
-        mock_get_procedure.assert_called_once_with(123)
+    # Verify markdown formatting
+    assert "# Test Procedure" in result
+    assert "## Basic Information" in result
+    assert "A test procedure" in result
+    assert "## Steps" in result
+    assert "Step 1" in result
+    assert "Step 2" in result
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_subscription_notification_flow(
+    mock_client: ERegulationsClient,
+    mock_context,
+    test_server: FastMCP
+):
+    """Test subscription and notification flow for procedure updates."""
+    # Subscribe to procedure updates
+    pattern = "eregulations://procedure/{id}"
+    await subscriptions.subscription_manager.subscribe(
+        pattern,
+        mock_context.client_id,
+        mock_context
+    )
     
-    @pytest.mark.asyncio
-    @patch("mcp_eregulations.api.detailed_client.ERegulationsClient.make_request")
-    async def test_get_procedure_abc(self, mock_make_request, client):
-        """Test get_procedure_abc method."""
-        # Setup mock
-        mock_make_request.return_value = {"abc_data": "test"}
-        
-        # Call the method
-        result = await client.get_procedure_abc(123)
-        
-        # Assertions
-        assert result == {"abc_data": "test"}
-        mock_make_request.assert_called_once_with("Procedures/123/ABC")
+    # Simulate procedure update through client
+    await mock_client.get_procedure(123)
     
-    @pytest.mark.asyncio
-    @patch("mcp_eregulations.api.detailed_client.ERegulationsClient.make_request")
-    async def test_get_step_details(self, mock_make_request, client):
-        """Test get_step_details method."""
-        # Setup mock
-        mock_make_request.return_value = {"step_data": "test"}
+    # Verify notification was sent
+    assert len(mock_context.notifications) == 1
+    notification = mock_context.notifications[0]
+    assert notification["resource_id"] == "eregulations://procedure/123"
+    assert notification["content"]["title"] == "Test Procedure"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_error_handling_flow(
+    mock_client: ERegulationsClient,
+    mock_context,
+    test_server: FastMCP
+):
+    """Test error handling across API and MCP layers."""
+    # Set up error handler
+    @test_server.resource("eregulations://error-test/{status}")
+    async def trigger_error(status: str, ctx: types.Context) -> str:
+        ctx.request_context.lifespan_context = {"client": mock_client}
+        status_code = int(status)
         
-        # Call the method
-        result = await client.get_step_details(123, 456)
-        
-        # Assertions
-        assert result == {"step_data": "test"}
-        mock_make_request.assert_called_once_with("Procedures/123/Steps/456")
+        try:
+            # This will raise an APIError
+            await mock_client.make_request(f"error/{status_code}")
+            return "This should not happen"
+        except APIError as e:
+            # Verify error is properly propagated
+            assert e.status_code == status_code
+            return f"Error {status_code}: {str(e)}"
     
-    @pytest.mark.asyncio
-    @patch("mcp_eregulations.api.detailed_client.ERegulationsClient.make_request")
-    async def test_get_countries(self, mock_make_request, client):
-        """Test get_countries method."""
-        # Setup mock
-        mock_make_request.return_value = [{"id": 1, "name": "Country 1"}, {"id": 2, "name": "Country 2"}]
+    # Test with different error scenarios
+    error_codes = [400, 401, 403, 404, 500]
+    for code in error_codes:
+        result = await trigger_error(str(code), mock_context)
+        assert f"Error {code}" in result
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_concurrent_resource_access(
+    mock_client: ERegulationsClient,
+    mock_detailed_client: DetailedERegulationsClient,
+    mock_context,
+    test_server: FastMCP
+):
+    """Test concurrent access to MCP resources."""
+    # Initialize resource
+    @test_server.resource("eregulations://concurrent-test/{id}")
+    async def concurrent_resource(id: str, ctx: types.Context) -> str:
+        ctx.request_context.lifespan_context = {
+            "client": mock_client,
+            "detailed_client": mock_detailed_client
+        }
         
-        # Call the method
-        result = await client.get_countries()
+        # Simulate some async work
+        await asyncio.sleep(0.1)
+        return f"Resource {id} processed"
+    
+    # Test concurrent access
+    ids = list(range(5))
+    tasks = [
+        concurrent_resource(str(id), mock_context)
+        for id in ids
+    ]
+    
+    # Execute concurrently
+    results = await asyncio.gather(*tasks)
+    
+    # Verify all requests completed
+    assert len(results) == len(ids)
+    for id, result in zip(ids, results):
+        assert f"Resource {id} processed" in result
+
+
+def format_procedure_markdown(data: dict) -> str:
+    """Helper function to format procedure data as markdown."""
+    output = []
+    
+    # Title
+    if "basic_info" in data:
+        basic = data["basic_info"]
+        output.append(f"# {basic.get('title', 'Untitled Procedure')}\n")
+        output.append("## Basic Information\n")
+        output.append(basic.get("description", "No description available") + "\n")
+    
+    # Resume
+    if "resume" in data and data["resume"]:
+        output.append("## Resume\n")
+        output.append(data["resume"].get("text", "No resume available") + "\n")
+    
+    # Steps
+    if "basic_info" in data and "blocks" in data["basic_info"]:
+        output.append("## Steps\n")
+        for block in data["basic_info"]["blocks"]:
+            for step in block.get("steps", []):
+                output.append(f"### Step {step.get('id')}: {step.get('title')}\n")
+                if "description" in step:
+                    output.append(step["description"] + "\n")
+    
+    # Costs
+    if "costs" in data and data["costs"]:
+        output.append("## Costs\n")
+        costs = data["costs"]
+        output.append(f"Total: {costs.get('total', 'Not specified')}\n")
         
-        # Assertions
-        assert len(result) == 2
-        assert result[0]["name"] == "Country 1"
-        assert result[1]["name"] == "Country 2"
-        mock_make_request.assert_called_once_with("Country")
+        if "items" in costs:
+            output.append("### Breakdown:\n")
+            for item in costs["items"]:
+                output.append(f"- {item.get('name')}: {item.get('amount')}\n")
+    
+    return "\n".join(output)

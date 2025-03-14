@@ -1,87 +1,98 @@
 """
 Data processing and indexing functionality for eRegulations data.
 """
-from typing import Any, Dict, List, Optional
+import asyncio
 import json
-import os
 import logging
+import os
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+import aiofiles
 
 logger = logging.getLogger(__name__)
 
-class ProcedureIndex:
+
+class SearchIndex:
     """Class for indexing and retrieving procedure data."""
     
-    def __init__(self, index_dir: str = "/home/ubuntu/mcp-eregulations/data/index"):
+    def __init__(self, index_dir: str = "data/index"):
         """
-        Initialize the procedure index.
+        Initialize the search index.
         
         Args:
             index_dir: Directory to store index files
         """
-        self.index_dir = index_dir
+        # Convert relative path to absolute
+        if not os.path.isabs(index_dir):
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            self.index_dir = os.path.join(base_dir, index_dir)
+        else:
+            self.index_dir = index_dir
+            
         self.procedures_index = {}
         self.steps_index = {}
         self.requirements_index = {}
         self.institutions_index = {}
         
+        # Lock for thread-safe file operations
+        self._file_lock = asyncio.Lock()
+        
         # Create index directory if it doesn't exist
         os.makedirs(self.index_dir, exist_ok=True)
-        
-        # Load existing indices if available
-        self._load_indices()
     
-    def _load_indices(self):
+    async def init(self) -> None:
+        """Initialize the index by loading data from disk."""
+        await self._load_indices()
+    
+    async def close(self) -> None:
+        """Clean up resources."""
+        # Save any pending changes
+        await self._save_indices()
+    
+    async def _load_indices(self) -> None:
         """Load existing indices from disk."""
         try:
-            procedures_path = os.path.join(self.index_dir, "procedures.json")
-            if os.path.exists(procedures_path):
-                with open(procedures_path, "r") as f:
-                    self.procedures_index = json.load(f)
-            
-            steps_path = os.path.join(self.index_dir, "steps.json")
-            if os.path.exists(steps_path):
-                with open(steps_path, "r") as f:
-                    self.steps_index = json.load(f)
-            
-            requirements_path = os.path.join(self.index_dir, "requirements.json")
-            if os.path.exists(requirements_path):
-                with open(requirements_path, "r") as f:
-                    self.requirements_index = json.load(f)
-            
-            institutions_path = os.path.join(self.index_dir, "institutions.json")
-            if os.path.exists(institutions_path):
-                with open(institutions_path, "r") as f:
-                    self.institutions_index = json.load(f)
-                    
-            logger.info("Loaded existing indices from disk")
+            async with self._file_lock:
+                indices = {
+                    "procedures": self.procedures_index,
+                    "steps": self.steps_index,
+                    "requirements": self.requirements_index,
+                    "institutions": self.institutions_index
+                }
+                
+                for name, index in indices.items():
+                    path = os.path.join(self.index_dir, f"{name}.json")
+                    if os.path.exists(path):
+                        async with aiofiles.open(path, "r") as f:
+                            content = await f.read()
+                            indices[name].update(json.loads(content))
+                
+                logger.info("Loaded existing indices from disk")
         except Exception as e:
             logger.error(f"Error loading indices: {e}")
     
-    def _save_indices(self):
+    async def _save_indices(self) -> None:
         """Save indices to disk."""
         try:
-            procedures_path = os.path.join(self.index_dir, "procedures.json")
-            with open(procedures_path, "w") as f:
-                json.dump(self.procedures_index, f)
-            
-            steps_path = os.path.join(self.index_dir, "steps.json")
-            with open(steps_path, "w") as f:
-                json.dump(self.steps_index, f)
-            
-            requirements_path = os.path.join(self.index_dir, "requirements.json")
-            with open(requirements_path, "w") as f:
-                json.dump(self.requirements_index, f)
-            
-            institutions_path = os.path.join(self.index_dir, "institutions.json")
-            with open(institutions_path, "w") as f:
-                json.dump(self.institutions_index, f)
+            async with self._file_lock:
+                indices = {
+                    "procedures": self.procedures_index,
+                    "steps": self.steps_index,
+                    "requirements": self.requirements_index,
+                    "institutions": self.institutions_index
+                }
                 
-            logger.info("Saved indices to disk")
+                for name, index in indices.items():
+                    path = os.path.join(self.index_dir, f"{name}.json")
+                    async with aiofiles.open(path, "w") as f:
+                        await f.write(json.dumps(index, indent=2))
+                
+                logger.info("Saved indices to disk")
         except Exception as e:
             logger.error(f"Error saving indices: {e}")
     
-    def index_procedure(self, procedure_id: int, procedure_data: Dict[str, Any]):
+    async def index_procedure(self, procedure_id: int, procedure_data: Dict[str, Any]) -> None:
         """
         Index a procedure.
         
@@ -113,12 +124,12 @@ class ProcedureIndex:
             for step in steps:
                 step_id = step.get("id")
                 if step_id:
-                    self.index_step(procedure_id, step_id, step)
+                    await self.index_step(procedure_id, step_id, step)
         
         # Save indices
-        self._save_indices()
+        await self._save_indices()
     
-    def index_step(self, procedure_id: int, step_id: int, step_data: Dict[str, Any]):
+    async def index_step(self, procedure_id: int, step_id: int, step_data: Dict[str, Any]) -> None:
         """
         Index a step.
         
@@ -145,7 +156,7 @@ class ProcedureIndex:
             "data": step_data
         }
     
-    def index_requirements(self, procedure_id: int, requirements_data: Dict[str, Any]):
+    async def index_requirements(self, procedure_id: int, requirements_data: Dict[str, Any]) -> None:
         """
         Index requirements for a procedure.
         
@@ -161,9 +172,9 @@ class ProcedureIndex:
         }
         
         # Save indices
-        self._save_indices()
+        await self._save_indices()
     
-    def index_institution(self, institution_id: int, institution_data: Dict[str, Any]):
+    async def index_institution(self, institution_id: int, institution_data: Dict[str, Any]) -> None:
         """
         Index an institution.
         
@@ -188,7 +199,9 @@ class ProcedureIndex:
         }
         
         # Save indices
-        self._save_indices()
+        await self._save_indices()
+    
+    # --- Query Methods ---
     
     def search_procedures(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         """
@@ -279,5 +292,6 @@ class ProcedureIndex:
             return inst_data["data"]
         return None
 
+
 # Create a global index instance
-index = ProcedureIndex()
+index = SearchIndex()

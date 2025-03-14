@@ -67,6 +67,38 @@ tools = client.list_tools()
 print(tools)
 ```
 
+### Configuring the eRegulations API URL
+
+The MCP eRegulations server can be configured to work with any eRegulations instance. There are several ways to set the API URL:
+
+1. Command Line Arguments:
+```bash
+python -m mcp_eregulations.main --api-url https://api-example.eregulations.org
+```
+
+2. Environment Variables:
+```bash
+export EREGULATIONS_API_URL=https://api-example.eregulations.org
+python -m mcp_eregulations.main
+```
+
+3. Environment File (.env):
+```
+EREGULATIONS_API_URL=https://api-example.eregulations.org
+```
+
+The configuration priority is:
+1. Command line arguments (highest priority)
+2. Environment variables
+3. Environment file (.env)
+4. Default value in settings
+
+To verify the configured API URL, you can use the health check tool:
+```python
+result = await client.invoke("health_check")
+print(result["api_url"])  # Shows the current API URL
+```
+
 ## Available Tools
 
 The MCP eRegulations server provides the following tools:

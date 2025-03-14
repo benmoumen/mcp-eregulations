@@ -5,8 +5,11 @@ from typing import Any, Dict, List, Optional
 import httpx
 import logging
 from mcp_eregulations.config.settings import settings
+from mcp_eregulations.utils import subscriptions
+from mcp_eregulations.utils.errors import APIError
 
 logger = logging.getLogger(__name__)
+
 
 class ERegulationsClient:
     """Client for interacting with the eRegulations API."""
@@ -23,6 +26,24 @@ class ERegulationsClient:
         # Add API key to headers if provided
         if self.api_key:
             self.headers["Authorization"] = f"Bearer {self.api_key}"
+        
+        # Initialize HTTP client with connection pooling
+        self._client: Optional[httpx.AsyncClient] = None
+    
+    async def init(self) -> None:
+        """Initialize the HTTP client."""
+        if not self._client:
+            self._client = httpx.AsyncClient(
+                timeout=30.0,
+                headers=self.headers,
+                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+            )
+    
+    async def close(self) -> None:
+        """Close the HTTP client."""
+        if self._client:
+            await self._client.aclose()
+            self._client = None
     
     async def make_request(self, endpoint: str) -> Optional[Dict[str, Any]]:
         """
@@ -33,24 +54,38 @@ class ERegulationsClient:
             
         Returns:
             The JSON response as a dictionary, or None if the request failed
+            
+        Raises:
+            APIError: If the API request fails
         """
+        if not self._client:
+            await self.init()
+        
         url = f"{self.base_url}/{endpoint}"
         logger.debug(f"Making request to: {url}")
         
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, headers=self.headers, timeout=30.0)
-                response.raise_for_status()
-                return response.json()
+            response = await self._client.get(url)
+            response.raise_for_status()
+            return response.json()
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
-            return None
+            raise APIError(
+                e.response.status_code,
+                str(e),
+                endpoint=endpoint
+            )
         except httpx.RequestError as e:
-            logger.error(f"Request error occurred: {e}")
-            return None
+            raise APIError(
+                500,
+                f"Request error: {str(e)}",
+                endpoint=endpoint
+            )
         except Exception as e:
-            logger.error(f"Unexpected error occurred: {e}")
-            return None
+            raise APIError(
+                500,
+                f"Unexpected error: {str(e)}",
+                endpoint=endpoint
+            )
     
     async def get_procedure(self, procedure_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -63,7 +98,22 @@ class ERegulationsClient:
             The procedure data, or None if not found
         """
         endpoint = f"Procedures/{procedure_id}"
-        return await self.make_request(endpoint)
+        try:
+            data = await self.make_request(endpoint)
+            
+            # Notify subscribers if data was fetched successfully
+            if data:
+                await subscriptions.subscription_manager.notify_update(
+                    f"eregulations://procedure/{procedure_id}",
+                    data,
+                    mime_type="application/json"
+                )
+            
+            return data
+        except APIError as e:
+            if e.status_code == 404:
+                return None
+            raise
     
     async def get_procedure_resume(self, procedure_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -76,7 +126,22 @@ class ERegulationsClient:
             The procedure resume data, or None if not found
         """
         endpoint = f"Procedures/{procedure_id}/Resume"
-        return await self.make_request(endpoint)
+        try:
+            data = await self.make_request(endpoint)
+            
+            # Notify subscribers if data was fetched successfully
+            if data:
+                await subscriptions.subscription_manager.notify_update(
+                    f"eregulations://procedure/{procedure_id}/resume",
+                    data,
+                    mime_type="application/json"
+                )
+            
+            return data
+        except APIError as e:
+            if e.status_code == 404:
+                return None
+            raise
     
     async def get_procedure_steps(self, procedure_id: int) -> Optional[List[Dict[str, Any]]]:
         """
@@ -99,6 +164,14 @@ class ERegulationsClient:
         for block in procedure_data.get("blocks", []):
             steps.extend(block.get("steps", []))
         
+        # Notify subscribers about steps data
+        if steps:
+            await subscriptions.subscription_manager.notify_update(
+                f"eregulations://procedure/{procedure_id}/steps",
+                steps,
+                mime_type="application/json"
+            )
+        
         return steps
     
     async def get_procedure_requirements(self, procedure_id: int) -> Optional[Dict[str, Any]]:
@@ -112,7 +185,22 @@ class ERegulationsClient:
             Requirements data for the procedure, or None if not found
         """
         endpoint = f"Procedures/{procedure_id}/ABC/Requirements"
-        return await self.make_request(endpoint)
+        try:
+            data = await self.make_request(endpoint)
+            
+            # Notify subscribers if data was fetched successfully
+            if data:
+                await subscriptions.subscription_manager.notify_update(
+                    f"eregulations://procedure/{procedure_id}/requirements",
+                    data,
+                    mime_type="application/json"
+                )
+            
+            return data
+        except APIError as e:
+            if e.status_code == 404:
+                return None
+            raise
     
     async def get_procedure_costs(self, procedure_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -125,7 +213,23 @@ class ERegulationsClient:
             Cost data for the procedure, or None if not found
         """
         endpoint = f"Procedures/{procedure_id}/Totals"
-        return await self.make_request(endpoint)
+        try:
+            data = await self.make_request(endpoint)
+            
+            # Notify subscribers if data was fetched successfully
+            if data:
+                await subscriptions.subscription_manager.notify_update(
+                    f"eregulations://procedure/{procedure_id}/costs",
+                    data,
+                    mime_type="application/json"
+                )
+            
+            return data
+        except APIError as e:
+            if e.status_code == 404:
+                return None
+            raise
+
 
 # Create a global client instance
 client = ERegulationsClient()

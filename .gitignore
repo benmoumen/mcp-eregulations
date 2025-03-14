@@ -39,8 +39,9 @@ logs/
 *.swo
 
 # Monitoring
-monitoring/
-
+monitoring/*
+!monitoring/rules
+!monitoring/prometheus.yml
 # Miscellaneous
 .DS_Store
 
